@@ -1,7 +1,7 @@
 # Save/restore fish state for macOS
 # Inspired by /etc/bashrc_Apple_Terminal
 # Tunghsiao Liu <t@sparanoid.com>
-# Oct 16, 2019, 3:49 PM
+# https://github.com/sparanoid/fish_apple_terminal
 
 # Ensure:
 # - Terminal session ID exists, this can be absent when running fish from outside the Terminals
