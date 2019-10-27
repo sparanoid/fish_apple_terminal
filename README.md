@@ -23,7 +23,7 @@ The current version does not have the expiration check feature. I'll try to add 
 Download and put the script in `~/.config/fish/conf.d/`. Or just run:
 
 ```bash
-wget -Pc ~/.config/fish/conf.d/ https://github.com/sparanoid/fish_apple_terminal/raw/master/fish_apple_terminal.fish
+wget -P ~/.config/fish/conf.d/ https://github.com/sparanoid/fish_apple_terminal/raw/master/fish_apple_terminal.fish
 ```
 
 ## License
