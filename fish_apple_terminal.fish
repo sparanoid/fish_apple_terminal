@@ -91,9 +91,17 @@ if test -n "$TERM_SESSION_ID"; and status is-interactive
         # Take a PID-aware lock so concurrent shell exits don't collide.
         if /usr/bin/shlock -f "$fish_session_expiration_lock" -p $fish_pid
             echo -n 'Deleting expired sessions...'
-            set fish_session_expiration_deleted (/usr/bin/find "$fish_session_base" -type f '(' -name '*_history' -o -name '*_session' ')' '!' -name 'fish_history' -mtime $fish_session_expiration_age -print -delete | /usr/bin/wc -l | string trim)
-            if test "$fish_session_expiration_deleted" -gt 0
-                echo "$fish_session_expiration_deleted completed."
+
+            # Enumerate the expired per-session files once so we can size them before
+            # deleting (macOS `find` has no GNU `-printf`, so measure with `du`).
+            set fish_session_expired (/usr/bin/find "$fish_session_base" -type f '(' -name '*_history' -o -name '*_session' ')' '!' -name 'fish_history' -mtime $fish_session_expiration_age)
+            set fish_session_expired_count (count $fish_session_expired)
+
+            if test $fish_session_expired_count -gt 0
+                set fish_session_expired_size (/usr/bin/du -ch $fish_session_expired | /usr/bin/tail -1 | awk '{print $1}')
+                /bin/rm -f $fish_session_expired
+                set fish_session_kept_count (/usr/bin/find "$fish_session_base" -type f '(' -name '*_history' -o -name '*_session' ')' '!' -name 'fish_history' | /usr/bin/wc -l | string trim)
+                echo "$fish_session_expired_count removed ($fish_session_expired_size freed), $fish_session_kept_count kept."
             else
                 echo 'none found.'
             end
