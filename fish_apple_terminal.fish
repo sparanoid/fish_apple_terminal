@@ -25,6 +25,14 @@ if test -n "$TERM_SESSION_ID"; and status is-interactive
     set fish_session_history_shared "$fish_session_base/fish_history"
     set fish_session_store "$fish_session_base/$fish_session_id"_session
 
+    # How long to keep per-session `*_history`/`*_session` files before pruning
+    # them. Uses `find -mtime` syntax: `d` = days, `w` = weeks (note that `m`
+    # means MINUTES, not months). 26w is roughly half a year. Set this variable
+    # before sourcing this file to override the default.
+    set -q fish_session_expiration_age; or set fish_session_expiration_age +26w
+    set fish_session_expiration_check "$fish_session_base/_expiration_check_timestamp"
+    set fish_session_expiration_lock "$fish_session_base/_expiration_lockfile"
+
     function fish_session_start --on-event fish_prompt
         if test ! -s "$fish_session_store"
             echo Session start $fish_session_timestamp
@@ -66,9 +74,39 @@ if test -n "$TERM_SESSION_ID"; and status is-interactive
         end
     end
 
+    # Delete old session files, but not more than once a day.
+    # Ported from `shell_session_delete_expired` in /etc/zshrc_Apple_Terminal.
+    # Note: zsh keeps its session files in a dedicated `~/.zsh_sessions/`, but ours
+    # live next to the shared `fish_history`, so the find is scoped to the per-
+    # session `*_history`/`*_session` files and explicitly spares `fish_history`.
+    # Absolute paths are used because PATH (or a `find`->`bfs` alias) may differ
+    # by the time this runs at shell exit.
+    function fish_session_delete_expired
+        # Throttle: skip if we already checked within the last day.
+        set fish_session_expiration_recent (/usr/bin/find "$fish_session_expiration_check" -mtime -1d 2>/dev/null)
+        if test -e "$fish_session_expiration_check"; and test -n "$fish_session_expiration_recent"
+            return
+        end
+
+        # Take a PID-aware lock so concurrent shell exits don't collide.
+        if /usr/bin/shlock -f "$fish_session_expiration_lock" -p $fish_pid
+            echo -n 'Deleting expired sessions...'
+            set fish_session_expiration_deleted (/usr/bin/find "$fish_session_base" -type f '(' -name '*_history' -o -name '*_session' ')' '!' -name 'fish_history' -mtime $fish_session_expiration_age -print -delete | /usr/bin/wc -l | string trim)
+            if test "$fish_session_expiration_deleted" -gt 0
+                echo "$fish_session_expiration_deleted completed."
+            else
+                echo 'none found.'
+            end
+            umask 077
+            /usr/bin/touch "$fish_session_expiration_check"
+            /bin/rm "$fish_session_expiration_lock"
+        end
+    end
+
     # Update saved session state when exiting
     function fish_session_update
         fish_session_merge
+        fish_session_delete_expired
     end
     trap fish_session_update EXIT
 end
