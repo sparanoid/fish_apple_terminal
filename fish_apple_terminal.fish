@@ -22,6 +22,10 @@ switch "$TERM_PROGRAM"
         set fish_session_key $TERM_SESSION_ID
 end
 
+# An empty `fish_history` means history isn't saved at all (`fish --private` sets it, too), so
+# leave such shells alone
+set -q fish_history; and test -z "$fish_history"; and set fish_session_key
+
 # Ensure:
 # - Terminal session ID exists, this can be absent when running fish from outside the Terminals
 # - fish is interactive: https://github.com/fish-shell/fish-shell/issues/5058
