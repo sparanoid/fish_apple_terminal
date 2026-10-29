@@ -77,6 +77,9 @@ if test -n "$fish_session_key"; and status is-interactive
         # full copy of the shared history until fish rewrites the file (about every 25 commands;
         # it appends otherwise). This matters in Orca, where every agent tab is a new session
         /bin/cp -c $fish_session_history_shared $fish_session_history
+        # Mark the session as ours right away (`fish_session_start` fills it in at the first
+        # prompt), so expiry can tell it apart from other named histories even without a prompt
+        /usr/bin/touch $fish_session_store
     end
 
     function fish_session_merge
@@ -102,11 +105,12 @@ if test -n "$fish_session_key"; and status is-interactive
         end
     end
 
-    # Delete old session files, but not more than once a day.
+    # Delete old sessions, but not more than once a day.
     # Ported from `shell_session_delete_expired` in /etc/zshrc_Apple_Terminal.
     # Note: zsh keeps its session files in a dedicated `~/.zsh_sessions/`, but ours
-    # live next to the shared `fish_history`, so the find is scoped to the per-
-    # session `*_history`/`*_session` files and explicitly spares `fish_history`.
+    # live next to the shared `fish_history` and other named histories (like Orca's
+    # `orca_<hash>_history`). Only this script writes `*_session` files, so only
+    # sessions that have one are ours to delete.
     # Absolute paths are used because PATH (or a `find`->`bfs` alias) may differ
     # by the time this runs at shell exit.
     function fish_session_delete_expired
@@ -120,15 +124,26 @@ if test -n "$fish_session_key"; and status is-interactive
         if /usr/bin/shlock -f "$fish_session_expiration_lock" -p $fish_pid
             echo -n 'Deleting expired sessions...'
 
-            # Enumerate the expired per-session files once so we can size them before
-            # deleting (macOS `find` has no GNU `-printf`, so measure with `du`).
-            set fish_session_expired (/usr/bin/find "$fish_session_base" -type f '(' -name '*_history' -o -name '*_session' ')' '!' -name 'fish_history' -mtime $fish_session_expiration_age)
-            set fish_session_expired_count (count $fish_session_expired)
+            # Enumerate the expired sessions once so we can size them before deleting
+            # (macOS `find` has no GNU `-printf`, so measure with `du`). A session has
+            # expired once its marker and its history, if it still has one, are both old.
+            set fish_session_old (/usr/bin/find "$fish_session_base" -type f '(' -name '*_history' -o -name '*_session' ')' -mtime $fish_session_expiration_age)
+            set fish_session_expired
+            set fish_session_expired_count 0
+            for fish_session_old_store in $fish_session_old
+                string match -q -- '*_session' $fish_session_old_store; or continue
+                set -l fish_session_old_history (string replace -r -- '_session$' _history $fish_session_old_store)
+                if contains -- $fish_session_old_history $fish_session_old; or not test -e $fish_session_old_history
+                    set -a fish_session_expired $fish_session_old_store
+                    test -e $fish_session_old_history; and set -a fish_session_expired $fish_session_old_history
+                    set fish_session_expired_count (math $fish_session_expired_count + 1)
+                end
+            end
 
             if test $fish_session_expired_count -gt 0
                 set fish_session_expired_size (/usr/bin/du -ch $fish_session_expired | /usr/bin/tail -1 | awk '{print $1}')
                 /bin/rm -f $fish_session_expired
-                set fish_session_kept_count (/usr/bin/find "$fish_session_base" -type f '(' -name '*_history' -o -name '*_session' ')' '!' -name 'fish_history' | /usr/bin/wc -l | string trim)
+                set fish_session_kept_count (/usr/bin/find "$fish_session_base" -type f -name '*_session' | /usr/bin/wc -l | string trim)
                 echo "$fish_session_expired_count removed ($fish_session_expired_size freed), $fish_session_kept_count kept."
             else
                 echo 'none found.'
