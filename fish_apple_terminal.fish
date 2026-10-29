@@ -3,15 +3,24 @@
 # Sparanoid <t@sparanoid.com>
 # https://github.com/sparanoid/fish_apple_terminal
 
+# Terminal session ID: Apple Terminal sets `TERM_SESSION_ID` per tab. Orca doesn't, but sets
+# `ORCA_PANE_KEY` (`<tab-id>:<pane-id>`) per pane, saves it with the layout, and hands the same key
+# to the new shell when it restores the pane after a relaunch, so it works the same way. Prefer it,
+# since Orca doesn't clear `TERM_SESSION_ID` and one it inherited would be shared by every pane.
+set -l fish_session_key $TERM_SESSION_ID
+test -n "$ORCA_PANE_KEY"; and set fish_session_key $ORCA_PANE_KEY
+
 # Ensure:
 # - Terminal session ID exists, this can be absent when running fish from outside the Terminals
 # - fish is interactive: https://github.com/fish-shell/fish-shell/issues/5058
-if test -n "$TERM_SESSION_ID"; and status is-interactive
+if test -n "$fish_session_key"; and status is-interactive
 
-    # Dashes are invaid characters for fish history file, replace them with underscores
-    set fish_session_id (string replace -a '-' _ $TERM_SESSION_ID)
+    # Only alphanumerics and underscores are valid in a fish history session name, replace the
+    # rest (dashes, and the colon in Orca's key) with underscores
+    set fish_session_id (string replace -ra '[^A-Za-z0-9_]' _ $fish_session_key)
 
-    # Set fish history based on Terminal session ID
+    # Set fish history based on Terminal session ID. In Orca this also replaces the per-worktree
+    # `orca_<hash>` history that Orca assigns to new panes
     set -x fish_history $fish_session_id
 
     # Check if session history available
@@ -48,7 +57,10 @@ if test -n "$TERM_SESSION_ID"; and status is-interactive
     else
         echo Merging shared history to $fish_session_id
         umask 077
-        cat $fish_session_history_shared >$fish_session_history
+        # Clone (APFS copy-on-write) instead of copying, so a new session doesn't take up another
+        # full copy of the shared history until fish rewrites the file (about every 25 commands;
+        # it appends otherwise). This matters in Orca, where every agent tab is a new session
+        /bin/cp -c $fish_session_history_shared $fish_session_history
     end
 
     function fish_session_merge

@@ -18,6 +18,10 @@ Then, I tried `fish`. It's incredible, it just works out-of-the-box and performa
 
 The current version does not have the expiration check feature. I'll try to add it when I have time. PRs are also welcome.
 
+## Orca
+
+[Orca](https://github.com/stablyai/orca) doesn't set `$TERM_SESSION_ID`, so the script keys each pane on `$ORCA_PANE_KEY` instead. Orca saves that key with the pane layout and reuses it when it restores the pane after a relaunch, so each pane gets its history back just like a Terminal.app tab. This takes over from Orca's own per-worktree fish history (`orca_<hash>_history`).
+
 ## Install
 
 Download and put the script in `~/.config/fish/conf.d/`. Or just run:
