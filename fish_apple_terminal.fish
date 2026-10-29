@@ -110,7 +110,7 @@ if test -n "$fish_session_key"; and status is-interactive
     # Note: zsh keeps its session files in a dedicated `~/.zsh_sessions/`, but ours
     # live next to the shared `fish_history` and other named histories (like Orca's
     # `orca_<hash>_history`). Only this script writes `*_session` files, so only
-    # sessions that have one are ours to delete.
+    # sessions that have one are ours to delete, and `fish_history` is always spared.
     # Absolute paths are used because PATH (or a `find`->`bfs` alias) may differ
     # by the time this runs at shell exit.
     function fish_session_delete_expired
@@ -127,7 +127,7 @@ if test -n "$fish_session_key"; and status is-interactive
             # Enumerate the expired sessions once so we can size them before deleting
             # (macOS `find` has no GNU `-printf`, so measure with `du`). A session has
             # expired once its marker and its history, if it still has one, are both old.
-            set fish_session_old (/usr/bin/find "$fish_session_base" -type f '(' -name '*_history' -o -name '*_session' ')' -mtime $fish_session_expiration_age)
+            set fish_session_old (/usr/bin/find "$fish_session_base" -type f '(' -name '*_history' -o -name '*_session' ')' '!' -name 'fish_history' -mtime $fish_session_expiration_age)
             set fish_session_expired
             set fish_session_expired_count 0
             for fish_session_old_store in $fish_session_old
