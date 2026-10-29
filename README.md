@@ -15,8 +15,7 @@ Then, I tried `fish`. It's incredible, it just works out-of-the-box and performa
   - Create one for each tab/window based on `$TERM_SESSION_ID`
   - Copy existing history from the shared history, which is the default history (typically `~/.local/share/fish/fish_history`).
 - Save the history since you start the session back to the shared history.
-
-The current version does not have the expiration check feature. I'll try to add it when I have time. PRs are also welcome.
+- Delete sessions that haven't been used for 26 weeks, at most once a day, like `/etc/zshrc_Apple_Terminal` does. Only sessions this script created are deleted, never `fish_history` or other named histories. To change how long they're kept, set `fish_session_expiration_age` in `find -mtime` syntax, e.g. `set -U fish_session_expiration_age +8w`.
 
 ## Orca and VS Code
 
