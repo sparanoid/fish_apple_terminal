@@ -15,8 +15,14 @@ Then, I tried `fish`. It's incredible, it just works out-of-the-box and performa
   - Create one for each tab/window based on `$TERM_SESSION_ID`
   - Copy existing history from the shared history, which is the default history (typically `~/.local/share/fish/fish_history`).
 - Save the history since you start the session back to the shared history.
+- Delete sessions that haven't been used for 26 weeks, at most once a day, like `/etc/zshrc_Apple_Terminal` does. Only sessions this script created are deleted, never `fish_history` or other named histories. To change how long they're kept, set `fish_session_expiration_age` in `find -mtime` syntax, e.g. `set -U fish_session_expiration_age +8w`.
 
-The current version does not have the expiration check feature. I'll try to add it when I have time. PRs are also welcome.
+## Orca and VS Code
+
+Neither sets `$TERM_SESSION_ID`, so the script uses what each one does provide, picked by `$TERM_PROGRAM`:
+
+- [Orca](https://github.com/stablyai/orca): `$ORCA_PANE_KEY`. Orca saves that key with the pane layout and reuses it when it restores the pane after a relaunch, so each pane gets its history back just like a Terminal.app tab. This takes over from Orca's own per-worktree fish history (`orca_<hash>_history`).
+- VS Code: a hash of `$VSCODE_NONCE`, the per-terminal shell integration nonce. With persistent sessions on (the default), VS Code revives a terminal after a restart using the nonce it was first given, so it works the same way. This relies on VS Code internals rather than a documented ID: if a future version changes it, restored terminals just start a new session.
 
 ## Install
 
