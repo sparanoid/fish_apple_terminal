@@ -26,6 +26,9 @@ end
 # leave such shells alone
 set -q fish_history; and test -z "$fish_history"; and set fish_session_key
 
+# `fish` is the shared history's own session name, so it can't name a session of its own
+test "$fish_session_key" = fish; and set fish_session_key
+
 # Ensure:
 # - Terminal session ID exists, this can be absent when running fish from outside the Terminals
 # - fish is interactive: https://github.com/fish-shell/fish-shell/issues/5058
