@@ -18,9 +18,12 @@ Then, I tried `fish`. It's incredible, it just works out-of-the-box and performa
 
 The current version does not have the expiration check feature. I'll try to add it when I have time. PRs are also welcome.
 
-## Orca
+## Orca and VS Code
 
-[Orca](https://github.com/stablyai/orca) doesn't set `$TERM_SESSION_ID`, so the script keys each pane on `$ORCA_PANE_KEY` instead. Orca saves that key with the pane layout and reuses it when it restores the pane after a relaunch, so each pane gets its history back just like a Terminal.app tab. This takes over from Orca's own per-worktree fish history (`orca_<hash>_history`).
+Neither sets `$TERM_SESSION_ID`, so the script uses what each one does provide, picked by `$TERM_PROGRAM`:
+
+- [Orca](https://github.com/stablyai/orca): `$ORCA_PANE_KEY`. Orca saves that key with the pane layout and reuses it when it restores the pane after a relaunch, so each pane gets its history back just like a Terminal.app tab. This takes over from Orca's own per-worktree fish history (`orca_<hash>_history`).
+- VS Code: a hash of `$VSCODE_NONCE`, the per-terminal shell integration nonce. With persistent sessions on (the default), VS Code revives a terminal after a restart using the nonce it was first given, so it works the same way. This relies on VS Code internals rather than a documented ID: if a future version changes it, restored terminals just start a new session.
 
 ## Install
 

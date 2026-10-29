@@ -3,12 +3,24 @@
 # Sparanoid <t@sparanoid.com>
 # https://github.com/sparanoid/fish_apple_terminal
 
-# Terminal session ID: Apple Terminal sets `TERM_SESSION_ID` per tab. Orca doesn't, but sets
-# `ORCA_PANE_KEY` (`<tab-id>:<pane-id>`) per pane, saves it with the layout, and hands the same key
-# to the new shell when it restores the pane after a relaunch, so it works the same way. Prefer it,
-# since Orca doesn't clear `TERM_SESSION_ID` and one it inherited would be shared by every pane.
-set -l fish_session_key $TERM_SESSION_ID
-test -n "$ORCA_PANE_KEY"; and set fish_session_key $ORCA_PANE_KEY
+# Terminal session ID, which the terminal hands back to the new shell when it restores a tab/pane
+# after a relaunch:
+# - Apple Terminal: `TERM_SESSION_ID`
+# - Orca: `ORCA_PANE_KEY` (`<tab-id>:<pane-id>`), saved with the pane layout
+# - VS Code: has none, but revives a terminal with the launch options it saved, so its shell
+#   integration nonce `VSCODE_NONCE` stays the same. VS Code hides the nonce from child processes
+#   and `fish_history` is exported, so use a hash of it (fed via stdin to keep it out of `ps`)
+# Pick by `TERM_PROGRAM`, which each terminal sets for its own shells, since the other variables can
+# be inherited from wherever the terminal app itself was launched.
+set -l fish_session_key
+switch "$TERM_PROGRAM"
+    case Orca
+        set fish_session_key $ORCA_PANE_KEY
+    case vscode
+        test -n "$VSCODE_NONCE"; and set fish_session_key vscode_(printf %s $VSCODE_NONCE | /sbin/md5 -q)
+    case '*'
+        set fish_session_key $TERM_SESSION_ID
+end
 
 # Ensure:
 # - Terminal session ID exists, this can be absent when running fish from outside the Terminals
