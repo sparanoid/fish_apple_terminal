@@ -239,10 +239,10 @@ if test -n "$fish_session_key"
         fish_session_scan_history "$fish_session_history" "$fish_session_timestamp" 0 >"$tmp"
 
         if test $status -eq 0; and test -s "$tmp"
-            # Lock `$fish_session_base` with `flock(2)` — the same directory lock fish
-            # itself takes around `fish_history` reads/writes — so merges never interleave
-            # with other exiting sessions, compaction, or non-session fish shells.
-            if /usr/bin/lockf -ksn -t 5 "$fish_session_base" /bin/sh -c '
+            # Coordinate with fish's own history writer (`fish::fs::LockedFile::new` acquires
+            # `flock(LOCK_EX)` on the parent directory `$fish_session_base` before opening or
+            # renaming `fish_history`; older fish <3.4 `flock`s `fish_history` itself).
+            if /usr/bin/lockf -ksn -t 5 "$fish_session_base" /usr/bin/lockf -ks -t 5 "$fish_session_history_shared" /bin/sh -c '
                 umask 077
                 if [ -s "$2" ] && [ "$(/usr/bin/tail -c 1 "$2" | /usr/bin/wc -l)" -eq 0 ]; then
                     printf "\n" >>"$2"
@@ -260,9 +260,14 @@ if test -n "$fish_session_key"
     # Deduplicate and sanitize the shared `fish_history` file at most once a day,
     # only from shells that actually ran a command. Because interactive sessions
     # point `fish_history` at per-session files, fish itself rarely compacts the
-    # shared `fish_history`. Scans outside the directory lock so concurrent shell
-    # exits never wait on `awk`, then swaps atomically under `flock(2)` only if
-    # `fish_history` was untouched during the scan.
+    # shared `fish_history`.
+    #
+    # Coordinates with non-session fish shells using fish's own locking protocol
+    # (`fish::fs::LockedFile::new` takes `flock(LOCK_EX)` on `$fish_session_base`
+    # before opening or renaming `fish_history`, and fish <3.4 `flock`s the file
+    # itself): snapshot `stat` under the lock, run the `awk` scan outside the lock
+    # so concurrent exits never wait on it, and atomically `mv` under the lock only
+    # if `stat` is unchanged and the scan produced non-empty valid output.
     function fish_session_compact_shared
         test "$fish_session_dirty" = 1; or return
         test -n "$fish_private_mode"; and return
@@ -282,11 +287,20 @@ if test -n "$fish_session_key"
             umask 077
             set -l tmp (/usr/bin/mktemp "$fish_session_base/.fish_history_compact.XXXXXX")
             if test -n "$tmp"
-                set -l stat_before (/usr/bin/stat -f '%i:%z:%Fm' "$fish_session_history_shared" 2>/dev/null)
-                if test -n "$stat_before"; and fish_session_scan_history "$fish_session_history_shared" 0 1 >"$tmp"
+                set -l stat_before (
+                    /usr/bin/lockf -ksn -t 5 "$fish_session_base" /usr/bin/lockf -ksn -t 5 "$fish_session_history_shared" \
+                        /usr/bin/stat -f '%i:%z:%Fm' "$fish_session_history_shared" 2>/dev/null
+                )
+                # Require `test -s "$tmp"` so an unrecognized future fish history format or
+                # skewed clock never wipes `fish_history` (a 100%-corrupt pre-existing file
+                # still compacts because `fish_session_merge` just appended this session's
+                # valid command(s) right before `fish_session_compact_shared` runs).
+                if test -n "$stat_before"
+                    and fish_session_scan_history "$fish_session_history_shared" 0 1 >"$tmp"
+                    and test -s "$tmp"
                     if /usr/bin/cmp -s "$tmp" "$fish_session_history_shared"
                         /usr/bin/touch "$fish_session_compact_check"
-                    else if /usr/bin/lockf -ksn -t 5 "$fish_session_base" /bin/sh -c '
+                    else if /usr/bin/lockf -ksn -t 5 "$fish_session_base" /usr/bin/lockf -ksn -t 5 "$fish_session_history_shared" /bin/sh -c '
                         [ "$(/usr/bin/stat -f "%i:%z:%Fm" "$2" 2>/dev/null)" = "$3" ] || exit 2
                         /bin/mv "$1" "$2"
                     ' sh "$tmp" "$fish_session_history_shared" "$stat_before"
