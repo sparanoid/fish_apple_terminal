@@ -57,7 +57,6 @@ if test -n "$fish_session_key"
     set -g fish_session_base "$HOME/.local/share/fish"
     set -g fish_session_history "$fish_session_base/$fish_session_id"_history
     set -g fish_session_history_shared "$fish_session_base/fish_history"
-    set -g fish_session_history_lock "$fish_session_base/_history_lockfile"
     set -g fish_session_store "$fish_session_base/$fish_session_id"_session
     set -g fish_session_dirty 0
 
@@ -68,6 +67,8 @@ if test -n "$fish_session_key"
     set -q fish_session_expiration_age; or set -g fish_session_expiration_age +26w
     set -g fish_session_expiration_check "$fish_session_base/_expiration_check_timestamp"
     set -g fish_session_expiration_lock "$fish_session_base/_expiration_lockfile"
+    set -g fish_session_compact_check "$fish_session_base/_compact_check_timestamp"
+    set -g fish_session_compact_lock "$fish_session_base/_compact_lockfile"
 
     function fish_session_start --on-event fish_prompt
         functions -e fish_session_start
@@ -99,27 +100,15 @@ if test -n "$fish_session_key"
         if test -e "$fish_session_history_shared"
             /bin/cp -c "$fish_session_history_shared" "$fish_session_history" 2>/dev/null
             or /bin/cp "$fish_session_history_shared" "$fish_session_history"
+            if test -s "$fish_session_history"
+                if not /usr/bin/tail -c 1 "$fish_session_history" | builtin count >/dev/null
+                    printf '\n' >>"$fish_session_history"
+                end
+            end
         end
         # Mark the session as ours right away (`fish_session_start` fills it in at the first
         # prompt), so expiry can tell it apart from other named histories even without a prompt
         /usr/bin/touch "$fish_session_store"
-    end
-
-    # Acquire/release a PID-aware lock around `fish_history` reads/writes so concurrent
-    # exiting tabs never interleave lines or race with compaction. Retries >1s so
-    # `shlock` can also break a stale lock left behind in the previous second.
-    function fish_session_lock_history
-        set -l tries 0
-        while test $tries -lt 25
-            /usr/bin/shlock -f "$fish_session_history_lock" -p $fish_pid; and return 0
-            set tries (math $tries + 1)
-            /bin/sleep 0.05
-        end
-        return 1
-    end
-
-    function fish_session_unlock_history
-        /bin/rm -f "$fish_session_history_lock"
     end
 
     # Stream validated `- cmd:` blocks from `$argv[1]` starting at timestamp `$argv[2]`.
@@ -250,42 +239,67 @@ if test -n "$fish_session_key"
         fish_session_scan_history "$fish_session_history" "$fish_session_timestamp" 0 >"$tmp"
 
         if test $status -eq 0; and test -s "$tmp"
-            if fish_session_lock_history
-                echo Writing history from $fish_session_history to $fish_session_history_shared
+            # Lock `$fish_session_base` with `flock(2)` — the same directory lock fish
+            # itself takes around `fish_history` reads/writes — so merges never interleave
+            # with other exiting sessions, compaction, or non-session fish shells.
+            if /usr/bin/lockf -ksn -t 5 "$fish_session_base" /bin/sh -c '
                 umask 077
-                if test -s "$fish_session_history_shared"
-                    if not /usr/bin/tail -c 1 "$fish_session_history_shared" | builtin count >/dev/null
-                        printf '\n' >>"$fish_session_history_shared"
+                if [ -s "$2" ] && [ "$(/usr/bin/tail -c 1 "$2" | /usr/bin/wc -l)" -eq 0 ]; then
+                    printf "\n" >>"$2"
+                fi
+                /bin/cat "$1" >>"$2"
+            ' sh "$tmp" "$fish_session_history_shared"
+                echo Writing history from $fish_session_history to $fish_session_history_shared
+            else
+                echo "Skipping history merge: could not lock $fish_session_base" >&2
+            end
+        end
+        /bin/rm -f "$tmp"
+    end
+
+    # Deduplicate and sanitize the shared `fish_history` file at most once a day,
+    # only from shells that actually ran a command. Because interactive sessions
+    # point `fish_history` at per-session files, fish itself rarely compacts the
+    # shared `fish_history`. Scans outside the directory lock so concurrent shell
+    # exits never wait on `awk`, then swaps atomically under `flock(2)` only if
+    # `fish_history` was untouched during the scan.
+    function fish_session_compact_shared
+        test "$fish_session_dirty" = 1; or return
+        test -n "$fish_private_mode"; and return
+
+        set -l check_age (builtin path mtime -R "$fish_session_compact_check" 2>/dev/null)
+        if test -n "$check_age"; and test "$check_age" -lt 86400
+            return
+        end
+
+        if not test -s "$fish_session_history_shared"
+            umask 077
+            /usr/bin/touch "$fish_session_compact_check"
+            return
+        end
+
+        if /usr/bin/shlock -f "$fish_session_compact_lock" -p $fish_pid
+            umask 077
+            set -l tmp (/usr/bin/mktemp "$fish_session_base/.fish_history_compact.XXXXXX")
+            if test -n "$tmp"
+                set -l stat_before (/usr/bin/stat -f '%i:%z:%Fm' "$fish_session_history_shared" 2>/dev/null)
+                if test -n "$stat_before"; and fish_session_scan_history "$fish_session_history_shared" 0 1 >"$tmp"
+                    if /usr/bin/cmp -s "$tmp" "$fish_session_history_shared"
+                        /usr/bin/touch "$fish_session_compact_check"
+                    else if /usr/bin/lockf -ksn -t 5 "$fish_session_base" /bin/sh -c '
+                        [ "$(/usr/bin/stat -f "%i:%z:%Fm" "$2" 2>/dev/null)" = "$3" ] || exit 2
+                        /bin/mv "$1" "$2"
+                    ' sh "$tmp" "$fish_session_history_shared" "$stat_before"
+                        /usr/bin/touch "$fish_session_compact_check"
                     end
                 end
-                /bin/cat "$tmp" >>"$fish_session_history_shared"
-                fish_session_unlock_history
+                /bin/rm -f "$tmp"
             end
+            /bin/rm -f "$fish_session_compact_lock"
         end
-        /bin/rm -f "$tmp"
     end
 
-    # Deduplicate and sanitize the shared `fish_history` file. Because interactive
-    # sessions point `fish_history` at per-session files, fish itself rarely
-    # compacts the shared `fish_history`.
-    function fish_session_compact_shared
-        test -s "$fish_session_history_shared"; or return
-
-        umask 077
-        set -l tmp (/usr/bin/mktemp "$fish_session_base/.fish_history_compact.XXXXXX"); or return
-
-        if fish_session_lock_history
-            if fish_session_scan_history "$fish_session_history_shared" 0 1 >"$tmp"
-                if test -s "$tmp"; and not /usr/bin/cmp -s "$tmp" "$fish_session_history_shared"
-                    /bin/mv "$tmp" "$fish_session_history_shared"
-                end
-            end
-            fish_session_unlock_history
-        end
-        /bin/rm -f "$tmp"
-    end
-
-    # Delete old sessions, and compact `fish_history`, at most once a day.
+    # Delete old sessions at most once a day.
     # Ported from `shell_session_delete_expired` in /etc/zshrc_Apple_Terminal.
     # Note: zsh keeps its session files in a dedicated `~/.zsh_sessions/`, but ours
     # live next to the shared `fish_history` and other named histories (like Orca's
@@ -330,8 +344,6 @@ if test -n "$fish_session_key"
                 echo 'none found.'
             end
 
-            fish_session_compact_shared
-
             umask 077
             /usr/bin/touch "$fish_session_expiration_check"
             /bin/rm -f "$fish_session_expiration_lock"
@@ -342,6 +354,7 @@ if test -n "$fish_session_key"
     function fish_session_update
         fish_session_merge
         fish_session_delete_expired
+        fish_session_compact_shared
     end
     trap fish_session_update EXIT
 end
